@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeInMemoryStore } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode');
 const express = require('express');
 const fs = require('fs');
@@ -8,6 +8,9 @@ const app = express();
 let qrImagen = '';
 
 if (!fs.existsSync('./auth_info_baileys')) fs.mkdirSync('./auth_info_baileys');
+
+// Creamos un almacén en memoria súper ligero para registrar los chats activos
+const store = makeInMemoryStore({});
 
 app.get('/', (req, res) => {
     if (qrImagen) {
@@ -32,6 +35,9 @@ async function startBot() {
         syncFullHistory: false,
         browser: ['FastBot', 'Chrome', '120.0.0.0']
     });
+
+    // Vinculamos el store al socket para que empiece a registrar chats conforme entran
+    store.bind(sock.ev);
 
     setInterval(() => process.exit(1), 24 * 60 * 60 * 1000);
 
@@ -61,32 +67,32 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // DENTRO DE LA FUNCIÓN, AQUÍ SÍ EXISTE "sock"
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
         if (!m.message || m.key.fromMe) return;
         const texto = (m.message.conversation || m.message.extendedTextMessage?.text || "").toLowerCase().trim();
 
         if (texto === 'delchats') {
-            await sock.sendMessage(m.key.remoteJid, { text: '🧹 Intentando limpiar los chats...' });
+            await sock.sendMessage(m.key.remoteJid, { text: '🧹 Limpiando todos los chats registrados...' });
             try {
-                const chats = await sock.groupFetchAllParticipating();
-                const chatIds = Object.keys(chats);
+                // Obtenemos todos los chats almacenados en el store
+                const allChats = store.chats.all();
 
-                if (chatIds.length === 0) {
-                    await sock.sendMessage(m.key.remoteJid, { text: '⚠️ No hay chats grupales activos para limpiar.' });
+                if (allChats.length === 0) {
+                    await sock.sendMessage(m.key.remoteJid, { text: '⚠️ No hay chats en el registro todavía.' });
                     return;
                 }
 
-                for (const id of chatIds) {
+                for (const chat of allChats) {
                     try {
-                        await sock.chatModify({ delete: true }, id);
+                        // Borramos cada chat de la lista del bot
+                        await sock.chatModify({ delete: true }, chat.id);
                     } catch (innerErr) {
-                        console.log(`No se pudo borrar el chat ${id}:`, innerErr.message);
+                        console.log(`No se pudo borrar el chat ${chat.id}:`, innerErr.message);
                     }
                 }
 
-                await sock.sendMessage(m.key.remoteJid, { text: '✅ ¡Proceso de limpieza finalizado!' });
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ ¡Todos los chats han sido eliminados!' });
             } catch (err) {
                 console.error('Error general:', err);
                 await sock.sendMessage(m.key.remoteJid, { text: `❌ Error al ejecutar: ${err.message}` });
