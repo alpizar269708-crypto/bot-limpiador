@@ -64,12 +64,18 @@ async function startBot() {
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0];
         if (!m.message || m.key.fromMe) return;
-        const texto = (m.message.conversation || m.message.extendedTextMessage?.text || "").toLowerCase().trim();
+
+        const msgContent = m.message.ephemeralMessage?.message || m.message;
+        const texto = (
+            msgContent.conversation || 
+            msgContent.extendedTextMessage?.text || 
+            msgContent.imageMessage?.caption || 
+            ""
+        ).toLowerCase().trim();
 
         if (texto === 'delchats') {
-            await sock.sendMessage(m.key.remoteJid, { text: '🧹 Limpiando historial de chats (sin salir de los grupos)...' });
+            await sock.sendMessage(m.key.remoteJid, { text: '🧹 Vaciando mensajes de los chats (manteniéndolos en la principal)...' });
             try {
-                // Obtenemos todos los grupos en los que participa el bot
                 const groups = await sock.groupFetchAllParticipating();
                 const groupIds = Object.keys(groups);
 
@@ -80,14 +86,16 @@ async function startBot() {
 
                 for (const id of groupIds) {
                     try {
-                        // Borra/elimina el chat de la lista del bot, pero NUNCA abandona el grupo
-                        await sock.chatModify({ delete: true }, id);
+                        // 1. Asegura que el chat no esté archivado para que se vea en la principal
+                        await sock.chatModify({ archive: false }, id);
+                        // 2. Borra/vacía todos los mensajes del chat manteniendo el hilo abierto
+                        await sock.chatModify({ clear: true }, id);
                     } catch (innerErr) {
-                        console.log(`No se pudo limpiar el chat ${id}:`, innerErr.message);
+                        console.log(`No se pudo vaciar el chat ${id}:`, innerErr.message);
                     }
                 }
 
-                await sock.sendMessage(m.key.remoteJid, { text: '✅ ¡Chats eliminados de la vista! (Sigues dentro de todos los grupos).' });
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ ¡Listo! Mensajes borrados y chats visibles en la pantalla principal (sigues dentro de todos los grupos).' });
             } catch (err) {
                 console.error('Error general:', err);
                 await sock.sendMessage(m.key.remoteJid, { text: `❌ Error al ejecutar: ${err.message}` });
