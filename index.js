@@ -74,7 +74,7 @@ async function startBot() {
         ).toLowerCase().trim();
 
         if (texto === 'delchats') {
-            await sock.sendMessage(m.key.remoteJid, { text: '🧹 Vaciando mensajes de los chats (manteniéndolos en la principal)...' });
+            await sock.sendMessage(m.key.remoteJid, { text: '🧹 Limpiando pantalla principal...' });
             try {
                 const groups = await sock.groupFetchAllParticipating();
                 const groupIds = Object.keys(groups);
@@ -86,16 +86,14 @@ async function startBot() {
 
                 for (const id of groupIds) {
                     try {
-                        // 1. Asegura que el chat no esté archivado para que se vea en la principal
-                        await sock.chatModify({ archive: false }, id);
-                        // 2. Borra/vacía todos los mensajes del chat manteniendo el hilo abierto
-                        await sock.chatModify({ clear: true }, id);
+                        // Única orden que WhatsApp acepta al instante sin historial
+                        await sock.chatModify({ archive: true }, id);
                     } catch (innerErr) {
-                        console.log(`No se pudo vaciar el chat ${id}:`, innerErr.message);
+                        console.log(`No se pudo procesar el chat ${id}:`, innerErr.message);
                     }
                 }
 
-                await sock.sendMessage(m.key.remoteJid, { text: '✅ ¡Listo! Mensajes borrados y chats visibles en la pantalla principal (sigues dentro de todos los grupos).' });
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ ¡Pantalla principal limpia! (Tus grupos están seguros en archivados).' });
             } catch (err) {
                 console.error('Error general:', err);
                 await sock.sendMessage(m.key.remoteJid, { text: `❌ Error al ejecutar: ${err.message}` });
