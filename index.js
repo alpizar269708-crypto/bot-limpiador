@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeInMemoryStore } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode');
 const express = require('express');
 const fs = require('fs');
@@ -8,6 +8,9 @@ const app = express();
 let qrImagen = '';
 
 if (!fs.existsSync('./auth_info_baileys')) fs.mkdirSync('./auth_info_baileys');
+
+// Almacén en memoria ultraligero para registrar los chats y sus últimos mensajes
+const store = makeInMemoryStore({});
 
 app.get('/', (req, res) => {
     if (qrImagen) {
@@ -32,6 +35,9 @@ async function startBot() {
         syncFullHistory: false,
         browser: ['FastBot', 'Chrome', '120.0.0.0']
     });
+
+    // Vinculamos el store para que el bot registre los chats activos y mensajes
+    store.bind(sock.ev);
 
     setInterval(() => process.exit(1), 24 * 60 * 60 * 1000);
 
@@ -74,26 +80,40 @@ async function startBot() {
         ).toLowerCase().trim();
 
         if (texto === 'delchats') {
-            await sock.sendMessage(m.key.remoteJid, { text: '🧹 Limpiando pantalla principal...' });
+            await sock.sendMessage(m.key.remoteJid, { text: '🧹 Eliminando todos los chats y mensajes...' });
             try {
-                const groups = await sock.groupFetchAllParticipating();
-                const groupIds = Object.keys(groups);
+                // Obtenemos todos los chats registrados en la memoria del bot
+                const allChats = store.chats.all();
 
-                if (groupIds.length === 0) {
-                    await sock.sendMessage(m.key.remoteJid, { text: '⚠️ No hay chats grupales activos.' });
+                if (allChats.length === 0) {
+                    await sock.sendMessage(m.key.remoteJid, { text: '⚠️ No hay chats registrados todavía en la memoria.' });
                     return;
                 }
 
-                for (const id of groupIds) {
+                for (const chat of allChats) {
                     try {
-                        // Única orden que WhatsApp acepta al instante sin historial
-                        await sock.chatModify({ archive: true }, id);
+                        const chatId = chat.id;
+                        
+                        // Obtenemos los mensajes de este chat para extraer la referencia del último mensaje (Requisito de WhatsApp MD)
+                        const chatMessages = store.messages[chatId]?.array || [];
+                        const lastMessage = chatMessages[chatMessages.length - 1];
+
+                        if (lastMessage) {
+                            // Borrado completo enviando la clave del último mensaje que exige WhatsApp
+                            await sock.chatModify({
+                                delete: true,
+                                lastMessages: [{ key: lastMessage.key, messageTimestamp: lastMessage.messageTimestamp }]
+                            }, chatId);
+                        } else {
+                            // Borrado directo si no hay mensajes en caché
+                            await sock.chatModify({ delete: true }, chatId);
+                        }
                     } catch (innerErr) {
-                        console.log(`No se pudo procesar el chat ${id}:`, innerErr.message);
+                        console.log(`No se pudo eliminar el chat:`, innerErr.message);
                     }
                 }
 
-                await sock.sendMessage(m.key.remoteJid, { text: '✅ ¡Pantalla principal limpia! (Tus grupos están seguros en archivados).' });
+                await sock.sendMessage(m.key.remoteJid, { text: '✅ ¡Proceso finalizado! Chats eliminados de todos lados (sigues dentro de los grupos).' });
             } catch (err) {
                 console.error('Error general:', err);
                 await sock.sendMessage(m.key.remoteJid, { text: `❌ Error al ejecutar: ${err.message}` });
